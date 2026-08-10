@@ -7,53 +7,68 @@ class Client
 {
 private:
     int         _fd;
+    std::string _hostname;
     std::string _nickname;
     std::string _username;
     std::string _realname;
     std::string _inputBuffer;
     std::string _outputBuffer;
+
     bool        _passwordAccepted;
     bool        _registered;
 
+    // CAP görüşmesi: irssi bağlanır bağlanmaz "CAP LS 302" gönderir ve
+    // "CAP END" gelmeden kayıt (registration) tamamlanmamalıdır.
+    bool        _capNegotiating;
+
+    // Gecikmeli bağlantı kapatma: komut işlenirken nesne silinemez,
+    // önce işaretlenir, poll döngüsünün sonunda temizlenir.
+    bool        _markedForQuit;
+    std::string _quitReason;
+
+    // Kopyalama engellenir (aynı fd'nin iki kez kapatılmasını önler)
+    Client(const Client& other);
+    Client& operator=(const Client& other);
+
 public:
-    // Yapıcı fonksiyon (Constructor): Yeni bir Client oluşturulduğunda çağrılır.
-    // Soket numarasını (fd) alır ve varsayılan değerleri atar.
-    Client(int fd);
-    
-    // Yıkıcı fonksiyon (Destructor)
+    Client(int fd, const std::string& hostname);
     ~Client();
 
-    // fd (dosya tanımlayıcı) değerini döndürür.
     int getFd() const;
-    
-    // Gelen veriyi (recv ile alınan) input buffer'a ekler.
-    void appendInput(const std::string& data);
-    
-    // Input buffer'dan '\n' veya '\r\n' ile biten tam bir satır (komut) çıkarır.
-    // Eğer tam satır yoksa boş döner.
-    std::string extractCommand();
+    std::string getHostname() const;
 
-    // Gönderilecek veriyi output buffer'a ekler.
+    // ":nick!user@host" biçiminde kaynak öneki. irssi mesajın kimden
+    // geldiğini bu maskeye bakarak çözer, sadece ":nick" yetmez.
+    std::string getPrefix() const;
+
+    // Gelen veriyi input buffer'a ekler (binary-safe).
+    void appendInput(const std::string& data);
+    size_t getInputSize() const;
+    void clearInput();
+
+    // Buffer'da '\n' ile biten tam bir satır varsa onu 'out'a yazar ve true döner.
+    // Tam satır yoksa false döner. Boş satırlar da true ile döner (out boş olur),
+    // böylece kalan komutlar aynı turda işlenmeye devam eder.
+    bool extractCommand(std::string& out);
+
     void queueMessage(const std::string& msg);
-    
-    // Output buffer'ın boş olup olmadığını kontrol eder.
     bool hasOutput() const;
-    
-    // Output buffer'daki veriyi döndürür.
     std::string getOutputBuffer() const;
-    
-    // Gönderilen byte kadar veriyi output buffer'dan siler (kısmi send için).
     void clearOutput(size_t sentBytes);
 
-    // Parola onay durumu
     bool isPasswordAccepted() const;
     void setPasswordAccepted(bool status);
 
-    // Kayıt durumu
     bool isRegistered() const;
     void setRegistered(bool status);
 
-    // İsim bilgileri
+    bool isCapNegotiating() const;
+    void setCapNegotiating(bool status);
+
+    bool isMarkedForQuit() const;
+    void markForQuit(const std::string& reason);
+    std::string getQuitReason() const;
+
     std::string getNickname() const;
     void setNickname(const std::string& nick);
     std::string getUsername() const;

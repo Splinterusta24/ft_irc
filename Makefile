@@ -4,18 +4,32 @@ CXXFLAGS    = -Wall -Wextra -Werror -std=c++98 -I include
 
 SRCS        = src/main.cpp \
               src/Server.cpp \
+              src/ServerUtils.cpp \
               src/Client.cpp \
-              src/Utils.cpp \
-              src/Parser.cpp \
               src/Channel.cpp \
-              src/Commands.cpp
-              
+              src/Parser.cpp \
+              src/Utils.cpp \
+              src/CommandsAuth.cpp \
+              src/CommandsChannel.cpp \
+              src/CommandsMode.cpp \
+              src/CommandsMessage.cpp
+
 OBJS        = $(SRCS:.cpp=.o)
+
+HEADERS     = include/Server.hpp \
+              include/Client.hpp \
+              include/Channel.hpp \
+              include/Parser.hpp \
+              include/Utils.hpp \
+              include/Replies.hpp
 
 all: $(NAME)
 
 $(NAME): $(OBJS)
 	$(CXX) $(CXXFLAGS) -o $(NAME) $(OBJS)
+
+%.o: %.cpp $(HEADERS)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
 	rm -f $(OBJS)
@@ -25,4 +39,8 @@ fclean: clean
 
 re: fclean all
 
-.PHONY: all clean fclean re
+# irssi davranışını taklit eden otomatik test paketi
+test: $(NAME)
+	@./tests/run_tests.sh
+
+.PHONY: all clean fclean re test

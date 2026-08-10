@@ -1,63 +1,92 @@
 #include "Client.hpp"
 
-// Constructor: Client nesnesi oluşturulurken soket (fd) atanır, durumlar sıfırlanır.
-Client::Client(int fd) : _fd(fd), _passwordAccepted(false), _registered(false)
+// Constructor: soket (fd) ve bağlantı adresi atanır, durumlar sıfırlanır.
+Client::Client(int fd, const std::string& hostname)
+    : _fd(fd),
+      _hostname(hostname),
+      _passwordAccepted(false),
+      _registered(false),
+      _capNegotiating(false),
+      _markedForQuit(false)
 {
 }
 
-// Destructor
 Client::~Client()
 {
 }
 
-// Client'ın bağlandığı soket numarasını döndürür.
 int Client::getFd() const
 {
     return _fd;
 }
 
-// Gelen yeni veriyi mevcut buffer'ın sonuna ekler. (Kısmi gelen paketler için gerekli)
+std::string Client::getHostname() const
+{
+    return _hostname;
+}
+
+// Kayıt tamamlanmadan da çağrılabildiği için boş alanlara güvenli varsayılan verilir.
+std::string Client::getPrefix() const
+{
+    std::string nick = _nickname.empty() ? "*" : _nickname;
+    std::string user = _username.empty() ? "unknown" : _username;
+    std::string host = _hostname.empty() ? "localhost" : _hostname;
+    return ":" + nick + "!" + user + "@" + host;
+}
+
+// Gelen yeni veriyi mevcut buffer'ın sonuna ekler (kısmi TCP paketleri için gerekli).
 void Client::appendInput(const std::string& data)
 {
     _inputBuffer += data;
 }
 
-// Buffer'da bitmiş bir satır (komut) varsa onu bulur, çıkarır ve döndürür.
-std::string Client::extractCommand()
+size_t Client::getInputSize() const
 {
-    std::string cmd = "";
-    size_t pos = _inputBuffer.find("\n");
-    if (pos != std::string::npos)
-    {
-        cmd = _inputBuffer.substr(0, pos + 1);
-        _inputBuffer.erase(0, pos + 1);
-        
-        // Satır sonundaki \r ve \n karakterlerini temizler
-        while (!cmd.empty() && (cmd[cmd.length() - 1] == '\r' || cmd[cmd.length() - 1] == '\n'))
-            cmd.erase(cmd.length() - 1);
-    }
-    return cmd;
+    return _inputBuffer.size();
 }
 
-// Client'a gönderilecek olan mesajı doğrudan send yapmak yerine output buffer'a ekler.
+void Client::clearInput()
+{
+    _inputBuffer.clear();
+}
+
+// Buffer'da tam bir satır varsa çıkarır. Dönüş değeri "satır bulundu mu" bilgisidir;
+// böylece boş satır (sadece "\r\n") komut akışını kesmez.
+bool Client::extractCommand(std::string& out)
+{
+    size_t pos = _inputBuffer.find('\n');
+    if (pos == std::string::npos)
+        return false;
+
+    out = _inputBuffer.substr(0, pos);
+    _inputBuffer.erase(0, pos + 1);
+
+    // Satır sonundaki '\r' karakterlerini temizler
+    while (!out.empty() && (out[out.length() - 1] == '\r' || out[out.length() - 1] == '\n'))
+        out.erase(out.length() - 1);
+
+    return true;
+}
+
+// Doğrudan send yapmak yerine mesajı output buffer'a ekler (non-blocking I/O).
 void Client::queueMessage(const std::string& msg)
 {
+    if (_markedForQuit && !msg.empty() && msg.compare(0, 6, "ERROR ") != 0)
+        return; // Kapanmakta olan bağlantıya yeni mesaj yığmayalım
     _outputBuffer += msg;
 }
 
-// Output buffer'da gönderilmeyi bekleyen veri olup olmadığını kontrol eder.
 bool Client::hasOutput() const
 {
     return !_outputBuffer.empty();
 }
 
-// Output buffer'daki tüm veriyi döndürür.
 std::string Client::getOutputBuffer() const
 {
     return _outputBuffer;
 }
 
-// Gönderim yapıldıktan sonra, başarıyla gönderilen miktar (sentBytes) kadar veriyi buffer'dan siler.
+// Başarıyla gönderilen miktar (sentBytes) kadar veriyi buffer'dan siler.
 void Client::clearOutput(size_t sentBytes)
 {
     if (sentBytes <= _outputBuffer.length())
@@ -66,25 +95,24 @@ void Client::clearOutput(size_t sentBytes)
         _outputBuffer.clear();
 }
 
-bool Client::isPasswordAccepted() const
+bool Client::isPasswordAccepted() const { return _passwordAccepted; }
+void Client::setPasswordAccepted(bool status) { _passwordAccepted = status; }
+
+bool Client::isRegistered() const { return _registered; }
+void Client::setRegistered(bool status) { _registered = status; }
+
+bool Client::isCapNegotiating() const { return _capNegotiating; }
+void Client::setCapNegotiating(bool status) { _capNegotiating = status; }
+
+bool Client::isMarkedForQuit() const { return _markedForQuit; }
+
+void Client::markForQuit(const std::string& reason)
 {
-    return _passwordAccepted;
+    _markedForQuit = true;
+    _quitReason = reason;
 }
 
-void Client::setPasswordAccepted(bool status)
-{
-    _passwordAccepted = status;
-}
-
-bool Client::isRegistered() const
-{
-    return _registered;
-}
-
-void Client::setRegistered(bool status)
-{
-    _registered = status;
-}
+std::string Client::getQuitReason() const { return _quitReason; }
 
 std::string Client::getNickname() const { return _nickname; }
 void Client::setNickname(const std::string& nick) { _nickname = nick; }

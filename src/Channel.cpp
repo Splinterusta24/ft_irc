@@ -1,20 +1,31 @@
 #include "Channel.hpp"
-#include <algorithm>
+#include "Utils.hpp"
 
-Channel::Channel(const std::string& name) : _name(name), _inviteOnly(false), _topicRestricted(false), _userLimit(0)
+Channel::Channel(const std::string& name)
+    : _name(name), _inviteOnly(false), _topicRestricted(false), _userLimit(0)
 {
 }
 
 Channel::~Channel() {}
 
 std::string Channel::getName() const { return _name; }
+
 std::string Channel::getTopic() const { return _topic; }
-void Channel::setTopic(const std::string& topic) { _topic = topic; }
+
+void Channel::setTopic(const std::string& topic, const std::string& setBy)
+{
+    _topic = topic;
+    _topicSetBy = setBy;
+}
+
+std::string Channel::getTopicSetBy() const { return _topicSetBy; }
 
 void Channel::addMember(Client* client)
 {
     if (!isMember(client))
         _members.push_back(client);
+    // Kanala girdikten sonra davet kaydı tüketilmiş olur
+    removeInvite(client);
 }
 
 void Channel::removeMember(Client* client)
@@ -28,6 +39,7 @@ void Channel::removeMember(Client* client)
         }
     }
     removeOperator(client);
+    removeInvite(client);
 }
 
 bool Channel::isMember(Client* client) const
@@ -36,6 +48,8 @@ bool Channel::isMember(Client* client) const
         if (_members[i] == client) return true;
     return false;
 }
+
+const std::vector<Client*>& Channel::getMembers() const { return _members; }
 
 void Channel::addOperator(Client* client)
 {
@@ -76,11 +90,11 @@ std::string Channel::getNamesList() const
     std::string list;
     for (size_t i = 0; i < _members.size(); ++i)
     {
+        if (i > 0)
+            list += " ";
         if (isOperator(_members[i]))
             list += "@";
         list += _members[i]->getNickname();
-        if (i < _members.size() - 1)
-            list += " ";
     }
     return list;
 }
@@ -93,9 +107,35 @@ void Channel::setTopicRestricted(bool status) { _topicRestricted = status; }
 
 std::string Channel::getKey() const { return _key; }
 void Channel::setKey(const std::string& key) { _key = key; }
+bool Channel::hasKey() const { return !_key.empty(); }
 
 int Channel::getUserLimit() const { return _userLimit; }
-void Channel::setUserLimit(int limit) { _userLimit = limit; }
+void Channel::setUserLimit(int limit) { _userLimit = (limit < 0) ? 0 : limit; }
+
+std::string Channel::getModeString(bool withParams) const
+{
+    std::string modes = "+";
+    std::string params;
+
+    if (_inviteOnly)
+        modes += "i";
+    if (_topicRestricted)
+        modes += "t";
+    if (hasKey())
+    {
+        modes += "k";
+        if (withParams)
+            params += " " + _key;
+    }
+    if (_userLimit > 0)
+    {
+        modes += "l";
+        if (withParams)
+            params += " " + Utils::intToString(_userLimit);
+    }
+
+    return modes + params;
+}
 
 void Channel::addInvite(Client* client)
 {
@@ -122,7 +162,6 @@ void Channel::removeInvite(Client* client)
     }
 }
 
-size_t Channel::getMemberCount() const
-{
-    return _members.size();
-}
+size_t Channel::getMemberCount() const { return _members.size(); }
+
+bool Channel::isEmpty() const { return _members.empty(); }
