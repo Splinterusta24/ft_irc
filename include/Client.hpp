@@ -56,6 +56,10 @@ public:
     std::string getOutputBuffer() const;
     void clearOutput(size_t sentBytes);
 
+    // Soket yazılamaz hâle geldiğinde bekleyen çıktı atılır; aksi hâlde
+    // bağlantı hiç kapatılamaz (kapanış çıktının boşalmasını bekler).
+    void discardOutput();
+
     bool isPasswordAccepted() const;
     void setPasswordAccepted(bool status);
 

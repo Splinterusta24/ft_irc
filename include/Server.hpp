@@ -32,6 +32,7 @@ private:
     void receiveFromClient(int fd);
     void flushClientOutput(int fd);
     void queueDisconnect(int fd, const std::string& reason);
+    void dropClient(int fd, const std::string& reason);
     void processDisconnects();
     void removeClient(int fd);
     void removePollFd(int fd);

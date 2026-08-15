@@ -103,9 +103,20 @@ void Server::updatePollEvents()
             _pollFds[i].events = POLLIN;
             continue;
         }
-        short events = POLLIN;
         std::map<int, Client*>::iterator it = _clients.find(_pollFds[i].fd);
-        if (it != _clients.end() && it->second->hasOutput())
+        if (it == _clients.end())
+        {
+            _pollFds[i].events = POLLIN;
+            continue;
+        }
+
+        // Kapanmakta olan istemciden artık okuma yapılmaz. POLLIN istenmeye
+        // devam edilirse okunmayan veri poll()'u her turda anında döndürür
+        // (meşgul döngü). Sadece kalan çıktıyı yazmak için POLLOUT istenir.
+        short events = 0;
+        if (!it->second->isMarkedForQuit())
+            events |= POLLIN;
+        if (it->second->hasOutput())
             events |= POLLOUT;
         _pollFds[i].events = events;
     }
@@ -147,7 +158,7 @@ void Server::run()
 
             if (revents & (POLLERR | POLLNVAL))
             {
-                queueDisconnect(fd, "Connection error");
+                dropClient(fd, "Connection error");
                 continue;
             }
 
@@ -158,7 +169,7 @@ void Server::run()
                 flushClientOutput(fd);
 
             if (revents & POLLHUP)
-                queueDisconnect(fd, "Connection reset by peer");
+                dropClient(fd, "Connection reset by peer");
         }
 
         processDisconnects();
@@ -206,16 +217,13 @@ void Server::receiveFromClient(int fd)
     char buffer[RECV_BUFFER];
     ssize_t bytesRead = recv(fd, buffer, sizeof(buffer), 0);
 
-    if (bytesRead == 0)
+    // recv yalnızca poll() POLLIN bildirdiğinde çağrılır; bu yüzden 0 (karşı
+    // taraf kapattı) ve -1 (gerçek hata) sonuçlarının ikisi de bağlantının
+    // bittiği anlamına gelir. Ne yapılacağına karar vermek için errno'ya
+    // BAKILMAZ — konu bunu açıkça yasaklıyor.
+    if (bytesRead <= 0)
     {
-        queueDisconnect(fd, "Connection closed");
-        return;
-    }
-    if (bytesRead < 0)
-    {
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
-            return;
-        queueDisconnect(fd, "Read error");
+        dropClient(fd, bytesRead == 0 ? "Connection closed" : "Read error");
         return;
     }
 
@@ -254,17 +262,17 @@ void Server::flushClientOutput(int fd)
     std::string data = client->getOutputBuffer();
     ssize_t bytesSent = send(fd, data.c_str(), data.length(), 0);
 
+    // send yalnızca poll() POLLOUT bildirdiğinde çağrılır. Kısmi yazma normaldir
+    // (gönderilen kadarı buffer'dan silinir, kalanı sonraki turda yazılır).
+    // Hata durumunda errno'ya bakmadan bağlantı kapatılır.
     if (bytesSent > 0)
-    {
         client->clearOutput(static_cast<size_t>(bytesSent));
-    }
-    else if (bytesSent < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
-    {
-        queueDisconnect(fd, "Write error");
-    }
+    else if (bytesSent < 0)
+        dropClient(fd, "Write error");
 }
 
 // Bağlantıyı hemen kapatmaz; sadece işaretler. Gerçek temizlik processDisconnects()'te.
+// Bekleyen çıktı (örn. "ERROR :Closing link") POLLOUT ile gönderildikten sonra kapatılır.
 void Server::queueDisconnect(int fd, const std::string& reason)
 {
     Client* client = getClientByFd(fd);
@@ -273,6 +281,18 @@ void Server::queueDisconnect(int fd, const std::string& reason)
 
     client->markForQuit(reason);
     _pendingDisconnects.push_back(fd);
+}
+
+// Soket artık kullanılamıyor (hata / karşı taraf kapattı): bekleyen çıktının
+// gönderilme şansı yok, atılır ve bağlantı bu turda kapatılır.
+void Server::dropClient(int fd, const std::string& reason)
+{
+    Client* client = getClientByFd(fd);
+    if (!client)
+        return;
+
+    client->discardOutput();
+    queueDisconnect(fd, reason);
 }
 
 void Server::processDisconnects()
@@ -284,7 +304,19 @@ void Server::processDisconnects()
     _pendingDisconnects.clear();
 
     for (size_t i = 0; i < pending.size(); ++i)
-        removeClient(pending[i]);
+    {
+        Client* client = getClientByFd(pending[i]);
+        if (!client)
+            continue;
+
+        // Hâlâ gönderilecek veri varsa kapatma ertelenir: veri bir sonraki
+        // poll turunda POLLOUT ile yazılır. Böylece poll() dışında send()
+        // yapmaya gerek kalmaz (konu bunu yasaklıyor).
+        if (client->hasOutput())
+            _pendingDisconnects.push_back(pending[i]);
+        else
+            removeClient(pending[i]);
+    }
 }
 
 void Server::removeClient(int fd)
@@ -312,13 +344,6 @@ void Server::removeClient(int fd)
     {
         delete _channels[emptyChannels[i]];
         _channels.erase(emptyChannels[i]);
-    }
-
-    // Kalan çıktıyı (örn. "ERROR :...") göndermek için son bir deneme
-    if (client->hasOutput())
-    {
-        std::string data = client->getOutputBuffer();
-        send(fd, data.c_str(), data.length(), 0);
     }
 
     std::cout << "[-] Disconnected fd " << fd

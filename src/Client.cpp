@@ -95,6 +95,11 @@ void Client::clearOutput(size_t sentBytes)
         _outputBuffer.clear();
 }
 
+void Client::discardOutput()
+{
+    _outputBuffer.clear();
+}
+
 bool Client::isPasswordAccepted() const { return _passwordAccepted; }
 void Client::setPasswordAccepted(bool status) { _passwordAccepted = status; }
 
